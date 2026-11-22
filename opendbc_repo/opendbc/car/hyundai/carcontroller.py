@@ -257,8 +257,7 @@ class CarController(CarControllerBase):
       stopping = self.ioniq6_accel_request.stopping
     if self.g90_longitudinal is not None:
       accel = self.g90_longitudinal.update(accel, CS.out.vEgo, actuators.longControlState, self.CP.openpilotLongitudinalControl)
-    stock_scc_display = CS.stock_scc_display if self.santa_fe_bus2_long else None
-    scc_control_allowed = not self.santa_fe_bus2_long or (stock_scc_display is not None and not CS.out.stockAeb)
+    scc_control_allowed = not self.santa_fe_bus2_long or (CS.santa_fe_scc_current and not CS.out.stockAeb)
     if not scc_control_allowed:
       accel, stopping = 0.0, False
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
@@ -298,7 +297,7 @@ class CarController(CarControllerBase):
 
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
                                             stopping, hud_control, actuators, CS, CC, lead_data=lead_data,
-                                            scc_control_allowed=scc_control_allowed, stock_scc_display=stock_scc_display))
+                                            scc_control_allowed=scc_control_allowed))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
@@ -316,7 +315,7 @@ class CarController(CarControllerBase):
     return new_actuators, can_sends
 
   def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping,
-                      hud_control, actuators, CS, CC, *, lead_data=None, scc_control_allowed=True, stock_scc_display=None):
+                      hud_control, actuators, CS, CC, *, lead_data=None, scc_control_allowed=True):
     _projection = self.learning_projection_observer
     can_sends = []
 
@@ -393,15 +392,18 @@ class CarController(CarControllerBase):
     if self.blended_longitudinal is not None:
       can_sends.extend(self.blended_longitudinal.commands(self.frame, CC, CS, accel, stopping, set_speed_in_units))
 
-    if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:
+    if self.santa_fe_bus2_long:
+      # One proposal per controller tick; the radar still clocks physical SCC12.
+      if CC.enabled and CC.longActive and scc_control_allowed and not CC.cruiseControl.override:
+        can_sends.append(hyundaican.create_scc12_request(self.packer, accel, stopping, self.frame))
+    elif self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:
       # TODO: unclear if this is needed
       jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
       use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
-      can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled and scc_control_allowed,
-                                                      accel, jerk, int(self.frame / 2), hud_control, set_speed_in_units, stopping,
-                                                      CC.cruiseControl.override, use_fca, self.CP, lead_data=lead_data,
-                                                      legacy_fca11=self.legacy_fca11, legacy_scc14=self.legacy_fca11,
-                                                      stock_scc_display=stock_scc_display))
+      can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
+                                                      hud_control, set_speed_in_units, stopping,
+                                                      CC.cruiseControl.override, use_fca, self.CP, lead_data=lead_data, legacy_fca11=self.legacy_fca11,
+                                                      legacy_scc14=self.legacy_fca11))
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and (self.CP.flags & HyundaiFlags.SEND_LFA.value or
@@ -415,11 +417,13 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, lfa_icon=self.classic_lfa_icon))
 
     # 5 Hz ACC options
-    if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:
+    if (self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and not self.santa_fe_bus2_long and
+        not self._ray_pedal and self.blended_longitudinal is None):
       can_sends.extend(hyundaican.create_acc_opt(self.packer, self.CP))
 
     # 2 Hz front radar options
-    if self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:
+    if (self.frame % 50 == 0 and self.CP.openpilotLongitudinalControl and not self.santa_fe_bus2_long and
+        not self._ray_pedal and self.blended_longitudinal is None):
       can_sends.append(hyundaican.create_frt_radar_opt(self.packer))
 
     return can_sends

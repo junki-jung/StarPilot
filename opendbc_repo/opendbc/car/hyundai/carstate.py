@@ -37,14 +37,14 @@ IONIQ_6_BSM_MAX_AGE_NS = 200_000_000
 SANTA_FE_BUS2_SCC_MESSAGES = ("SCC11", "SCC12", "SCC14", "FCA11")
 
 
-def santa_fe_stock_scc_display(parser):
+def santa_fe_stock_scc_current(parser):
   now = parser._last_update_nanos
   for name in SANTA_FE_BUS2_SCC_MESSAGES:
     state = parser.message_states[parser.dbc.name_to_msg[name].address]
     if (not state.timestamps or state.counter_fail >= MAX_BAD_COUNTER or
         not 0 < state.timestamps[-1] <= now or not state.valid(now, False)):
-      return None
-  return dict(parser.vl["SCC11"]), dict(parser.vl["SCC14"])
+      return False
+  return True
 IONIQ_6_BSM_LEFT_MASK = 0x10
 IONIQ_6_BSM_RIGHT_MASK = 0x08
 
@@ -83,7 +83,7 @@ class CarState(CarStateBase):
     from opendbc.car.hyundai.daw import DawSource
     self.daw = DawSource(CP)
     self.santa_fe_bus2_long = santa_fe_bus2_scc(CP) and CP.openpilotLongitudinalControl
-    self.stock_scc_display = None
+    self.santa_fe_scc_current = False
     self.forte_lkas_sources = NonSccLkasSources() if qualified_non_scc(CP) and CP.flags & HyundaiFlags.HAS_LDA_BUTTON else None
     if (qualified_classic_scc(CP) or qualified_classic_long(CP)) and CP.flags & HyundaiFlags.HAS_LDA_BUTTON:
       self.forte_lkas_sources = ClassicSccLkasSources(CP.carFingerprint)
@@ -230,7 +230,7 @@ class CarState(CarStateBase):
     ret = structs.CarState()
     cp_cruise = cp_cam if self.CP.flags & HyundaiFlags.CAMERA_SCC else cp
     if self.santa_fe_bus2_long:
-      self.stock_scc_display = santa_fe_stock_scc_display(cp_cam)
+      self.santa_fe_scc_current = santa_fe_stock_scc_current(cp_cam)
     self.is_metric = cp.vl["CLU11"]["CF_Clu_SPEED_UNIT"] == 0
     speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
 
@@ -298,7 +298,7 @@ class CarState(CarStateBase):
     ret.espDisabled = cp.vl["TCS11"]["TCS_PAS"] == 1
     ret.espActive = cp.vl["TCS11"]["ABS_ACT"] == 1
     ret.accFaulted = False if non_scc else cp.vl["TCS13"]["ACCEnable"] != 0
-    if self.santa_fe_bus2_long and self.stock_scc_display is None:
+    if self.santa_fe_bus2_long and not self.santa_fe_scc_current:
       ret.accFaulted = True
 
     if self.CP.flags & (HyundaiFlags.HYBRID | HyundaiFlags.EV | HyundaiFlags.FCEV):
@@ -350,8 +350,14 @@ class CarState(CarStateBase):
         aeb_src = "FCA11" if self.CP.flags & HyundaiFlags.USE_FCA.value else "SCC12"
         aeb_sig = "FCA_CmdAct" if self.CP.flags & HyundaiFlags.USE_FCA.value else "AEB_CmdAct"
         aeb_warning = cp_cruise.vl[aeb_src]["CF_VSM_Warn"] != 0
-        scc_warning = cp_cruise.vl["SCC12"]["TakeOverReq"] == 1
+        scc = cp_cruise.vl["SCC12"]
+        scc_warning = scc["TakeOverReq"] == 1
         aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
+        if self.santa_fe_bus2_long:
+          fca = cp_cruise.vl["FCA11"]
+          aeb_warning |= scc["CF_VSM_Warn"] != 0
+          aeb_braking |= any(scc[signal] != 0 for signal in ("CF_VSM_DecCmdAct", "CR_VSM_DecCmd", "AEB_CmdAct", "AEB_StopReq"))
+          aeb_braking |= fca["FCA_StopReq"] != 0 or fca["CR_VSM_DecCmd"] != 0
         ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
         ret.stockAeb = aeb_braking and (aeb_warning or self.santa_fe_bus2_long)
 

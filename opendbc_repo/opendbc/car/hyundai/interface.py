@@ -7,7 +7,8 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.non_scc_aol import NON_SCC_IDS
 from opendbc.car.hyundai.values import (is_blended, is_blended_alpha, HyundaiFlags, CAR, DBC, HyundaiSafetyFlags, CANFD_ANGLE_MODEL_BITS,
                                         CANFD_ANGLE_OBSERVED_ADAS_BIT, HYUNDAI_MRR35_RADAR_DBC, HYUNDAI_MRR30_RADAR_DBC,
-                                        HYUNDAI_GV70_RADAR_DBC, HYUNDAI_G90_RADAR_DBC, HYUNDAI_MRREVO14F_RADAR_DBC)
+                                        HYUNDAI_GV70_RADAR_DBC, HYUNDAI_G90_RADAR_DBC, HYUNDAI_MRREVO14F_RADAR_DBC,
+                                        santa_fe_bus2_scc)
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR, MRR35_RADAR_START_ADDR, MRR30_RADAR_START_ADDR, radar_bus, \
                                                stinger_2022_radar_available
 from opendbc.car.interfaces import CarInterfaceBase
@@ -329,6 +330,10 @@ class CarInterface(CarInterfaceBase):
         not ret.openpilotLongitudinalControl):
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CARNIVAL_ALT_RESUME.value
     ret.pcmCruise = not ret.openpilotLongitudinalControl
+    if santa_fe_bus2_scc(ret) and ret.openpilotLongitudinalControl:
+      # Distinct mode makes an older Panda reject the profile instead of sending
+      # host SCC12 directly under the ordinary Camera SCC rules.
+      ret.safetyConfigs[0].safetyModel = structs.CarParams.SafetyModel.hyundaiSantaFeBus2
     ret.longitudinalActuatorDelay = 0.5
     if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9):
       if candidate == CAR.HYUNDAI_IONIQ_5_PE:

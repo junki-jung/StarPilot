@@ -160,24 +160,7 @@ void can_rx(uint8_t can_number) {
     WORD_TO_BYTE_ARRAY(&to_push.data[4], CANx->sFIFOMailBox[0].RDHR);
     can_set_checksum(&to_push);
 
-    // forwarding (panda only)
-    int bus_fwd_num = safety_fwd_packet_hook(&to_push);
-    if (bus_fwd_num != -1) {
-      CANPacket_t to_send;
-
-      to_send.fd = 0U;
-      to_send.returned = 0U;
-      to_send.rejected = 0U;
-      to_send.extended = to_push.extended; // TXRQ
-      to_send.addr = to_push.addr;
-      to_send.bus = to_push.bus;
-      to_send.data_len_code = to_push.data_len_code;
-      (void)memcpy(to_send.data, to_push.data, dlc_to_len[to_push.data_len_code]);
-      can_set_checksum(&to_send);
-
-      can_send(&to_send, bus_fwd_num, true);
-      can_health[can_number].total_fwd_cnt += 1U;
-    }
+    can_forward(&to_push, can_number);
 
     safety_rx_invalid += safety_rx_hook(&to_push) ? 0U : 1U;
     ignition_can_hook(&to_push);

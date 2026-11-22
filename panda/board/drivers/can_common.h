@@ -187,22 +187,28 @@ bool can_check_checksum(CANPacket_t *packet) {
 
 void can_send(CANPacket_t *to_push, uint8_t bus_number, bool skip_tx_hook) {
   bool tx_allowed = skip_tx_hook;
+  bool consumed = false;
   if (!tx_allowed) {
     #ifdef STM32H7
     mpu_safety_open();
+    #else
+    ENTER_CRITICAL();
     #endif
-    tx_allowed = safety_tx_hook(to_push) != 0;
+    tx_allowed = safety_tx_hook(to_push);
+    consumed = tx_allowed && safety_stage_tx(to_push);
     #ifdef STM32H7
     mpu_safety_close();
+    #else
+    EXIT_CRITICAL();
     #endif
   }
-  if (tx_allowed) {
+  if (tx_allowed && !consumed) {
     if (bus_number < PANDA_CAN_CNT) {
       // add CAN packet to send queue
       tx_buffer_overflow += can_push(can_queues[bus_number], to_push) ? 0U : 1U;
       process_can(CAN_NUM_FROM_BUS_NUM(bus_number));
     }
-  } else {
+  } else if (!tx_allowed) {
     safety_tx_blocked += 1U;
     to_push->returned = 0U;
     to_push->rejected = 1U;
@@ -210,6 +216,30 @@ void can_send(CANPacket_t *to_push, uint8_t bus_number, bool skip_tx_hook) {
     // data changed
     can_set_checksum(to_push);
     rx_buffer_overflow += can_push(&can_rx_q, to_push) ? 0U : 1U;
+  }
+}
+
+static inline void can_forward(const CANPacket_t *received, uint8_t can_number) {
+  CANPacket_t forwarded;
+  #ifdef STM32H7
+  mpu_safety_open();
+  #else
+  ENTER_CRITICAL();
+  #endif
+  const int bus = safety_fwd_packet_hook(received);
+  if (bus >= 0) {
+    (void)memcpy(&forwarded, received, CANPACKET_HEAD_SIZE + GET_LEN(received));
+    safety_prepare_fwd(&forwarded);
+  }
+  #ifdef STM32H7
+  mpu_safety_close();
+  #else
+  EXIT_CRITICAL();
+  #endif
+  if (bus >= 0) {
+    can_set_checksum(&forwarded);
+    can_send(&forwarded, bus, true);
+    can_health[can_number].total_fwd_cnt += 1U;
   }
 }
 

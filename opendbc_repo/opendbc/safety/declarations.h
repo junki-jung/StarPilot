@@ -38,6 +38,7 @@
 #define SAFETY_VOLVO 36U
 #define SAFETY_MG 38U
 #define SAFETY_TESLA_PREAP 39U
+#define SAFETY_HYUNDAI_SANTA_FE_BUS2 40U
 
 #define GET_BIT(msg, b) ((bool)!!(((msg)->data[((b) / 8U)] >> ((b) % 8U)) & 0x1U))
 #define GET_FLAG(value, mask) (((value) & (mask)) == (mask))
@@ -240,6 +241,8 @@ typedef struct {
   tx_hook tx;
   fwd_hook fwd;
   fwd_packet_hook fwd_packet;
+  tx_hook stage_tx;
+  void (*prepare_fwd)(CANPacket_t *msg);
   get_checksum_t get_checksum;
   compute_checksum_t compute_checksum;
   get_counter_t get_counter;
@@ -371,6 +374,8 @@ extern safety_config current_safety_config;
 
 int safety_fwd_hook(int bus_num, int addr);
 int safety_fwd_packet_hook(const CANPacket_t *msg);
+bool safety_stage_tx(const CANPacket_t *msg);
+void safety_prepare_fwd(CANPacket_t *msg);
 int set_safety_hooks(uint16_t mode, uint16_t param);
 
 extern const safety_hooks body_hooks;
@@ -385,6 +390,7 @@ extern const safety_hooks honda_nidec_hooks;
 extern const safety_hooks honda_bosch_hooks;
 extern const safety_hooks hyundai_canfd_hooks;
 extern const safety_hooks hyundai_hooks;
+extern const safety_hooks hyundai_santa_fe_bus2_hooks;
 extern const safety_hooks hyundai_legacy_hooks;
 extern const safety_hooks mazda_hooks;
 extern const safety_hooks nissan_hooks;

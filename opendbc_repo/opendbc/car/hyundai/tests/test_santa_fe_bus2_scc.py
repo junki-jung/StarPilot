@@ -5,7 +5,6 @@ import pytest
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.hyundai import hyundaican
-from opendbc.car.hyundai.carstate import santa_fe_stock_scc_display
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, DBC, HyundaiSafetyFlags, santa_fe_bus2_scc
 
@@ -48,10 +47,11 @@ def decode_scc(frames):
   return parser.vl
 
 
-def test_uses_existing_camera_bus_safety_and_leaves_stock_ecu_running():
+def test_uses_dedicated_safety_and_leaves_stock_ecu_running():
   cp = params()
   assert santa_fe_bus2_scc(cp)
   assert cp.openpilotLongitudinalControl
+  assert cp.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.hyundaiSantaFeBus2
   assert cp.safetyConfigs[0].safetyParam & HyundaiSafetyFlags.CAMERA_SCC
   assert cp.safetyConfigs[0].safetyParam & HyundaiSafetyFlags.LONG
   assert not CarInterface.startup_required(cp)
@@ -64,11 +64,13 @@ def test_factory_wiring_and_alpha_choice_are_preserved():
   stock = params(bus=0)
   assert not santa_fe_bus2_scc(stock)
   assert stock.openpilotLongitudinalControl
+  assert stock.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.hyundai
   assert CarInterface.startup_required(stock)
 
   retrofit = params(alpha=False)
   assert santa_fe_bus2_scc(retrofit)
   assert not retrofit.openpilotLongitudinalControl
+  assert retrofit.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.hyundai
   assert retrofit.pcmCruise
 
 
@@ -86,37 +88,31 @@ def test_ambiguous_scc_sources_do_not_admit_long():
   assert not santa_fe_bus2_scc(cp)
 
 
-def test_reuses_display_without_reusing_stock_acceleration():
+def test_only_proposes_acceleration_without_sending_display_or_fca():
   ci = CarInterface(params())
   ci.update([(CAPTURE_NS, stock_frames())])
   _, frames = ci.apply(control_request().as_reader(), CAPTURE_NS)
-  scc = decode_scc(frames)
-  assert scc["SCC11"]["ObjValid"] == 1
-  assert scc["SCC11"]["ACC_ObjDist"] == 35
-  assert scc["SCC11"]["ACC_ObjRelSpd"] == pytest.approx(-1, abs=0.1)
-  assert scc["SCC14"]["ObjGap"] == 5
-  assert scc["SCC14"]["ObjDistStat"] == 2
-  assert scc["SCC12"]["ACCMode"] == 1
-  assert scc["SCC12"]["aReqValue"] == pytest.approx(-0.5)
-  assert not any(address in (0x38D, 0x483, 0x7D0) for address, _, _ in frames)
+  parser = CANParser(DBC_NAME, [("SCC12", 50)], 0)
+  assert parser.update([(CAPTURE_NS, frames)]) == {0x421}
+  assert parser.vl["SCC12"]["ACCMode"] == 1
+  assert parser.vl["SCC12"]["aReqValue"] == pytest.approx(-0.5)
+  assert not any(address in (0x420, 0x389, 0x50A, 0x38D, 0x483, 0x4A2, 0x7D0) for address, _, _ in frames)
   scc12 = next(data for address, data, _ in frames if address == 0x421)
   assert sum(sum(divmod(byte, 16)) for byte in scc12) % 16 == 0
 
 
 def test_missing_and_stale_stock_frames_inhibit_long_commands():
   ci = CarInterface(params())
-  assert santa_fe_stock_scc_display(ci.can_parsers[Bus.cam]) is None
+  assert not ci.CS.santa_fe_scc_current
   ci.update([(CAPTURE_NS, stock_frames())])
-  assert ci.CS.stock_scc_display is not None
+  assert ci.CS.santa_fe_scc_current
   expired = CAPTURE_NS + 250_000_000
   ci.update([(expired, [])])
-  assert ci.CS.stock_scc_display is None
+  assert not ci.CS.santa_fe_scc_current
   assert ci.CS.out.accFaulted
   actuators, frames = ci.apply(control_request().as_reader(), expired)
-  scc = decode_scc(frames)
   assert actuators.accel == 0
-  assert scc["SCC12"]["ACCMode"] == 0
-  assert scc["SCC12"]["aReqValue"] == pytest.approx(0)
+  assert not any(address == 0x421 for address, _, _ in frames)
 
 
 @pytest.mark.parametrize("warning", [False, True])
@@ -125,10 +121,8 @@ def test_releases_long_commands_during_stock_aeb(warning):
   ci.update([(CAPTURE_NS, stock_frames(braking=True, warning=warning))])
   assert ci.CS.out.stockAeb
   actuators, frames = ci.apply(control_request().as_reader(), CAPTURE_NS)
-  scc = decode_scc(frames)
   assert actuators.accel == 0
-  assert scc["SCC12"]["ACCMode"] == 0
-  assert not any(address == 0x38D for address, _, _ in frames)
+  assert not any(address in (0x421, 0x38D) for address, _, _ in frames)
 
 
 def test_generic_scc_output_without_stock_display():

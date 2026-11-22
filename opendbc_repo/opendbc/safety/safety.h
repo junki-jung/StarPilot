@@ -323,6 +323,16 @@ bool safety_tx_hook(CANPacket_t *msg) {
   return !relay_malfunction && whitelisted && safety_allowed;
 }
 
+bool safety_stage_tx(const CANPacket_t *msg) {
+  return (current_hooks->stage_tx != NULL) && current_hooks->stage_tx(msg);
+}
+
+void safety_prepare_fwd(CANPacket_t *msg) {
+  if (current_hooks->prepare_fwd != NULL) {
+    current_hooks->prepare_fwd(msg);
+  }
+}
+
 static int get_fwd_bus(int bus_num) {
   int destination_bus;
   if (bus_num == 0) {
@@ -465,6 +475,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
     {SAFETY_VOLVO, &volvo_dispatch_hooks},
     {SAFETY_HYUNDAI_CANFD, &hyundai_canfd_hooks},
 #ifdef ALLOW_DEBUG
+    {SAFETY_HYUNDAI_SANTA_FE_BUS2, &hyundai_santa_fe_bus2_hooks},
     {SAFETY_MG, &mg_hooks},
     {SAFETY_CHRYSLER_CUSW, &chrysler_cusw_hooks},
     {SAFETY_PSA, &psa_hooks},

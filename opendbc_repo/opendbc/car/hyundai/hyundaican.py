@@ -159,8 +159,15 @@ def create_lfahda_mfc(packer, enabled, *, lfa_icon=None):
   return packer.make_can_msg("LFAHDA_MFC", 0, values)
 
 
+def create_scc12_request(packer, accel, stopping, idx):
+  values = {"ACCMode": 1, "StopReq": int(stopping), "aReqRaw": accel, "aReqValue": accel, "CR_VSM_Alive": idx % 0xF}
+  data = packer.make_can_msg("SCC12", 0, values)[1]
+  values["CR_VSM_ChkSum"] = (-sum(sum(divmod(byte, 16)) for byte in data)) % 0x10
+  return packer.make_can_msg("SCC12", 0, values)
+
+
 def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, set_speed, stopping, long_override, use_fca, CP, *,
-                        lead_data=None, legacy_fca11=False, legacy_scc14=False, stock_scc_display=None):
+                        lead_data=None, legacy_fca11=False, legacy_scc14=False):
   commands = []
   if g90_lead_eligible(CP):
     lead_data = lead_data or CanLeadData()
@@ -181,9 +188,6 @@ def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, se
   if lead_data is not None:
     scc11_values.update(ObjValid=int(lead_data.lead_visible), ACC_ObjStatus=int(lead_data.lead_visible),
                         ACC_ObjRelSpd=lead_data.lead_rel_speed, ACC_ObjDist=int(lead_data.lead_distance))
-  if stock_scc_display is not None:
-    stock_scc11, _ = stock_scc_display
-    scc11_values.update({key: stock_scc11[key] for key in ("ObjValid", "ACC_ObjStatus", "ACC_ObjDist", "ACC_ObjRelSpd", "ACC_ObjLatPos")})
   commands.append(packer.make_can_msg("SCC11", 0, scc11_values))
 
   scc12_values = {
@@ -221,9 +225,6 @@ def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, se
                         JerkUpperLimit=upper_jerk * 0.1)
   if lead_data is not None:
     scc14_values.update(ObjGap=lead_data.object_gap, ObjDistStat=lead_data.object_rel_gap)
-  if stock_scc_display is not None:
-    _, stock_scc14 = stock_scc_display
-    scc14_values.update(ObjGap=stock_scc14["ObjGap"], ObjDistStat=stock_scc14["ObjDistStat"])
   commands.append(packer.make_can_msg("SCC14", 0, scc14_values))
 
   # Only send FCA11 on cars where it exists on the bus

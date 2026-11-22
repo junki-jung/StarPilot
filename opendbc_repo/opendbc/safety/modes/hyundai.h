@@ -981,6 +981,12 @@ const safety_hooks hyundai_hooks = {
   .compute_checksum = hyundai_compute_checksum,
 };
 
+// The retrofit driver owns the transmit clock. A host command is a one-shot
+// proposal, not an additional physical SCC12 frame.
+#ifdef ALLOW_DEBUG
+#include "opendbc/safety/modes/hyundai_santa_fe_bus2.h"
+#endif
+
 const safety_hooks hyundai_legacy_hooks = {
   .fwd_packet = hyundai_daw_fwd,
   .init = hyundai_legacy_init,
