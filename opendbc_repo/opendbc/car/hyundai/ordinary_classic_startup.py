@@ -8,13 +8,13 @@ from opendbc.car.hyundai.classic_scc_aol import qualified as stock_qualified, st
 from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup
 from opendbc.car.hyundai.ecu_startup import Outcome, stock_copy
 from opendbc.car.hyundai.g90_startup import G90Startup
-from opendbc.car.hyundai.values import CAR, HyundaiFlags
+from opendbc.car.hyundai.values import CAR, HyundaiFlags, santa_fe_bus2_scc
 
 CARS = CLASSIC_LONG_IDS - {CAR.GENESIS_G90}
 
 
 def required(cp):
-  return cp.carFingerprint in CARS and cp.openpilotLongitudinalControl
+  return cp.carFingerprint in CARS and cp.openpilotLongitudinalControl and not santa_fe_bus2_scc(cp)
 
 
 class OrdinaryClassicStartup(G90Startup):

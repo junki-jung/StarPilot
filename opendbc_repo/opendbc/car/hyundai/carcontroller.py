@@ -39,7 +39,7 @@ from opendbc.car.hyundai.canfd_lead import select_lead, ABSENT
 from opendbc.car.hyundai.torque_ev_scc import eligible as torque_ev_scc_eligible, options as torque_ev_scc_options, clock_boot_ns, fallback_lead
 from opendbc.car.hyundai.ccnc_ev_stock import replacement_requested, qualified as qualified_ccnc_ev_stock
 from opendbc.car.hyundai.angle_tx_recovery import AngleTxRecovery
-from opendbc.car.hyundai.values import is_blended, HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR
+from opendbc.car.hyundai.values import is_blended, HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, santa_fe_bus2_scc
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 
@@ -118,6 +118,7 @@ class CarController(CarControllerBase):
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.legacy_fca11 = hyundaican.uses_legacy_fca11(CP)
+    self.santa_fe_bus2_long = santa_fe_bus2_scc(CP) and CP.openpilotLongitudinalControl
     self.angle_limit_counter = 0
     self.angle_vm = VehicleModel(CP) if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else None
     self.apply_angle_last = 0.0
@@ -256,6 +257,10 @@ class CarController(CarControllerBase):
       stopping = self.ioniq6_accel_request.stopping
     if self.g90_longitudinal is not None:
       accel = self.g90_longitudinal.update(accel, CS.out.vEgo, actuators.longControlState, self.CP.openpilotLongitudinalControl)
+    stock_scc_display = CS.stock_scc_display if self.santa_fe_bus2_long else None
+    scc_control_allowed = not self.santa_fe_bus2_long or (stock_scc_display is not None and not CS.out.stockAeb)
+    if not scc_control_allowed:
+      accel, stopping = 0.0, False
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 
     can_sends = []
@@ -266,7 +271,7 @@ class CarController(CarControllerBase):
       can_sends.extend(self.blended_longitudinal.tester_present(self.frame))
 
     # tester present - w/ no response (keeps relevant ECU disabled)
-    if (self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and
+    if (self.frame % 100 == 0 and not self.santa_fe_bus2_long and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and
         self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None):
       # for longitudinal control, either radar or ADAS driving ECU
       addr, bus = 0x7d0, self.CAN.ECAN if self.CP.flags & HyundaiFlags.CANFD else 0
@@ -292,7 +297,8 @@ class CarController(CarControllerBase):
       torque_fault = CC.latActive and not apply_steer_req
 
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
-                                            stopping, hud_control, actuators, CS, CC, lead_data=lead_data))
+                                            stopping, hud_control, actuators, CS, CC, lead_data=lead_data,
+                                            scc_control_allowed=scc_control_allowed, stock_scc_display=stock_scc_display))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
@@ -310,7 +316,7 @@ class CarController(CarControllerBase):
     return new_actuators, can_sends
 
   def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping,
-                      hud_control, actuators, CS, CC, *, lead_data=None):
+                      hud_control, actuators, CS, CC, *, lead_data=None, scc_control_allowed=True, stock_scc_display=None):
     _projection = self.learning_projection_observer
     can_sends = []
 
@@ -391,10 +397,11 @@ class CarController(CarControllerBase):
       # TODO: unclear if this is needed
       jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
       use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
-      can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
-                                                      hud_control, set_speed_in_units, stopping,
-                                                      CC.cruiseControl.override, use_fca, self.CP, lead_data=lead_data, legacy_fca11=self.legacy_fca11,
-                                                      legacy_scc14=self.legacy_fca11))
+      can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled and scc_control_allowed,
+                                                      accel, jerk, int(self.frame / 2), hud_control, set_speed_in_units, stopping,
+                                                      CC.cruiseControl.override, use_fca, self.CP, lead_data=lead_data,
+                                                      legacy_fca11=self.legacy_fca11, legacy_scc14=self.legacy_fca11,
+                                                      stock_scc_display=stock_scc_display))
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and (self.CP.flags & HyundaiFlags.SEND_LFA.value or

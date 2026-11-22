@@ -16,6 +16,7 @@ import copy
 import math
 
 from opendbc.can import CANDefine, CANParser
+from opendbc.can.parser import MAX_BAD_COUNTER
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai.hyundaicanfd import CanBus
@@ -23,7 +24,7 @@ from opendbc.car.hyundai.non_scc_aol import NonSccLkasSources, qualified as qual
 from opendbc.car.hyundai.gv70_camera_lead import GV70CameraLead, eligible as gv70_lead_eligible
 from opendbc.car.hyundai.ioniq6_bsm import Ioniq6BlindspotSources
 from opendbc.car.hyundai.ray_pedal import ray_pedal_enabled
-from opendbc.car.hyundai.values import is_blended, HyundaiFlags, HyundaiSafetyFlags, CAR, DBC, Buttons, CarControllerParams
+from opendbc.car.hyundai.values import is_blended, HyundaiFlags, HyundaiSafetyFlags, CAR, DBC, Buttons, CarControllerParams, santa_fe_bus2_scc
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.dashboard_speed_limit import Tracker as LimitTracker, hyundai_canfd_sign, parser_expiry
 
@@ -33,6 +34,17 @@ PREV_BUTTON_SAMPLES = 8
 CLUSTER_SAMPLE_RATE = 20  # frames
 STANDSTILL_THRESHOLD = 12 * 0.03125
 IONIQ_6_BSM_MAX_AGE_NS = 200_000_000
+SANTA_FE_BUS2_SCC_MESSAGES = ("SCC11", "SCC12", "SCC14", "FCA11")
+
+
+def santa_fe_stock_scc_display(parser):
+  now = parser._last_update_nanos
+  for name in SANTA_FE_BUS2_SCC_MESSAGES:
+    state = parser.message_states[parser.dbc.name_to_msg[name].address]
+    if (not state.timestamps or state.counter_fail >= MAX_BAD_COUNTER or
+        not 0 < state.timestamps[-1] <= now or not state.valid(now, False)):
+      return None
+  return dict(parser.vl["SCC11"]), dict(parser.vl["SCC14"])
 IONIQ_6_BSM_LEFT_MASK = 0x10
 IONIQ_6_BSM_RIGHT_MASK = 0x08
 
@@ -70,6 +82,8 @@ class CarState(CarStateBase):
                                if preserves_stock_lkas_damping(CP) else None)
     from opendbc.car.hyundai.daw import DawSource
     self.daw = DawSource(CP)
+    self.santa_fe_bus2_long = santa_fe_bus2_scc(CP) and CP.openpilotLongitudinalControl
+    self.stock_scc_display = None
     self.forte_lkas_sources = NonSccLkasSources() if qualified_non_scc(CP) and CP.flags & HyundaiFlags.HAS_LDA_BUTTON else None
     if (qualified_classic_scc(CP) or qualified_classic_long(CP)) and CP.flags & HyundaiFlags.HAS_LDA_BUTTON:
       self.forte_lkas_sources = ClassicSccLkasSources(CP.carFingerprint)
@@ -215,6 +229,8 @@ class CarState(CarStateBase):
 
     ret = structs.CarState()
     cp_cruise = cp_cam if self.CP.flags & HyundaiFlags.CAMERA_SCC else cp
+    if self.santa_fe_bus2_long:
+      self.stock_scc_display = santa_fe_stock_scc_display(cp_cam)
     self.is_metric = cp.vl["CLU11"]["CF_Clu_SPEED_UNIT"] == 0
     speed_conv = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
 
@@ -282,6 +298,8 @@ class CarState(CarStateBase):
     ret.espDisabled = cp.vl["TCS11"]["TCS_PAS"] == 1
     ret.espActive = cp.vl["TCS11"]["ABS_ACT"] == 1
     ret.accFaulted = False if non_scc else cp.vl["TCS13"]["ACCEnable"] != 0
+    if self.santa_fe_bus2_long and self.stock_scc_display is None:
+      ret.accFaulted = True
 
     if self.CP.flags & (HyundaiFlags.HYBRID | HyundaiFlags.EV | HyundaiFlags.FCEV):
       if self.CP.flags & HyundaiFlags.FCEV:
@@ -335,7 +353,7 @@ class CarState(CarStateBase):
         scc_warning = cp_cruise.vl["SCC12"]["TakeOverReq"] == 1
         aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
         ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
-        ret.stockAeb = aeb_warning and aeb_braking
+        ret.stockAeb = aeb_braking and (aeb_warning or self.santa_fe_bus2_long)
 
     if self.CP.deprecated.enableBsm:
       ret.leftBlindspot = cp.vl["LCA11"]["CF_Lca_IndLeft"] != 0
@@ -759,6 +777,8 @@ class CarState(CarStateBase):
 
     msgs = [("CLU13", math.nan), ("BCM_PO_11", math.nan)] if CP.carFingerprint == CAR.HYUNDAI_ELANTRA_HEV_2024 else []
     cam_msgs = []
+    if santa_fe_bus2_scc(CP) and CP.openpilotLongitudinalControl:
+      cam_msgs.extend((name, 50) for name in SANTA_FE_BUS2_SCC_MESSAGES)
     if CP.flags & HyundaiFlags.NON_SCC:
       available_msg, _, enabled_msg, _, speed_msg, _ = get_non_scc_cruise_signals(CP.flags, CP.carFingerprint)
       msgs.extend((name, 0) for name in {available_msg, enabled_msg, speed_msg})

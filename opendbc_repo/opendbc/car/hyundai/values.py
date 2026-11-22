@@ -1168,6 +1168,10 @@ FW_QUERY_CONFIG = FwQueryConfig(
 DBC = CAR.create_dbc_map()
 
 
+def santa_fe_bus2_scc(CP) -> bool:
+  return CP.carFingerprint == CAR.HYUNDAI_SANTA_FE and bool(CP.flags & HyundaiFlags.CAMERA_SCC)
+
+
 def is_blended(CP) -> bool:
   """Exact mixed classic-PT/CANFD steering identity; no spare UInt32 flag."""
   return CP.carFingerprint == CAR.HYUNDAI_PALISADE_2023

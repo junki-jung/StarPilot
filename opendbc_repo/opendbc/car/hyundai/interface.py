@@ -218,6 +218,19 @@ class CarInterface(CarInterfaceBase):
     else:
       # Shared configuration for non CAN-FD cars
       ret.alphaLongitudinalAvailable = not (ret.flags & (HyundaiFlags.LEGACY | HyundaiFlags.UNSUPPORTED_LONGITUDINAL | HyundaiFlags.NON_SCC))
+      if candidate == CAR.HYUNDAI_SANTA_FE:
+        # The retrofit switch routes the radar's classic SCC pair to the camera bus.
+        scc_pair = (0x420, 0x421)
+        cam = fingerprint[2]
+        other_scc = any(addr in fingerprint[bus] for bus in (0, 1) for addr in scc_pair)
+        bus2_scc = all(cam.get(addr) == 8 for addr in scc_pair)
+        if bus2_scc and not other_scc:
+          ret.flags |= HyundaiFlags.CAMERA_SCC.value
+          # Admit LONG only with the cluster status and a separate stock FCA stream.
+          ret.alphaLongitudinalAvailable = ret.alphaLongitudinalAvailable and all(cam.get(addr) == 8 for addr in (0x389, 0x38D))
+        elif bus2_scc or (not other_scc and any(addr in cam for addr in scc_pair)):
+          # A mixed or incomplete SCC source cannot select the retrofit LONG path.
+          ret.alphaLongitudinalAvailable = False
       if is_blended(ret):
         # A prepublication owner alone may promote this exact stock CP.
         ret.alphaLongitudinalAvailable = False
