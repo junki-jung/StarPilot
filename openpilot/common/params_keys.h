@@ -329,7 +329,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"PrimeType", {PERSISTENT, INT}},
     {"RainbowPath", {PERSISTENT, BOOL, "0"}},
     {"RecordAudio", {PERSISTENT, BOOL}},
-    {"RecordFront", {PERSISTENT, BOOL}},
+    {"RecordFront", {PERSISTENT, BOOL, "0"}},
     {"RecordFrontLock", {PERSISTENT, BOOL}},  // for the internal fleet
     {"SecOCKey", {PERSISTENT | DONT_LOG, STRING}},
     {"SecOCKeys", {PERSISTENT | DONT_LOG, STRING}},

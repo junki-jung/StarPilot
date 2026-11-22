@@ -16,6 +16,9 @@ if [ -x /usr/local/venv/bin/python3 ]; then
   export PATH="/usr/local/venv/bin:$PATH"
 fi
 
+# Keep comma Connect and route uploads disabled on this branch.
+export STARPILOT_CLOUD_DISABLED=1
+
 # models get lower priority than ui
 # - ui is ~5ms
 # - modeld is 20ms
