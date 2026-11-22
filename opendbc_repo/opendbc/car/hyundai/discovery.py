@@ -14,6 +14,10 @@ CLASSIC_NORMAL_BUS_LAYOUT = {(0, 0x251): 8, (0, 0x386): 8, (0, 0x394): 8,
                             (0, 0x4F1): 4, (2, 0x340): 8, (0, 0x420): 8, (0, 0x421): 8}
 
 
+SANTA_FE_BUS2_LAYOUT = {**{key: size for key, size in CLASSIC_NORMAL_BUS_LAYOUT.items() if key[1] not in (0x420, 0x421)},
+                       (2, 0x420): 8, (2, 0x421): 8, (2, 0x389): 8, (2, 0x38D): 8}
+
+
 HDA1_NORMAL_BUS_LAYOUT = {(0, 0x120): 32, (2, 0x120): 32, (0, 0x35): 32, (0, 0xEA): 24,
                          (0, 0xA0): 24, (0, 0x1A0): 32, (0, 0x1CF): 8, (0, 0x130): 16}
 
@@ -48,6 +52,21 @@ def _canfd_variant_layouts():
 # Same camera/chassis proof, with the DBC-defined fuel, button and shifter sources.
 # This selects only query wiring; fresh VIN/FW/CAN still determine vehicle identity.
 CANFD_VARIANT_LAYOUTS = _canfd_variant_layouts()
+
+
+def santa_fe_bus2_normal_topology(packets):
+  # Qualify the normal harness for firmware queries using passively observed SCC.
+  observed = set()
+  for packet in packets:
+    for frame in packet:
+      if frame.src in (0, 1) and frame.address in (0x420, 0x421):
+        return False
+      key = (frame.src, frame.address)
+      if key in SANTA_FE_BUS2_LAYOUT:
+        if len(frame.dat) != SANTA_FE_BUS2_LAYOUT[key]:
+          return False
+        observed.add(key)
+  return observed == SANTA_FE_BUS2_LAYOUT.keys()
 
 
 def normal_bus_topology(can_recv, *, clock=time.monotonic):

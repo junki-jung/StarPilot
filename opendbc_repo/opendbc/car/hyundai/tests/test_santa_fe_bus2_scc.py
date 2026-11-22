@@ -4,9 +4,13 @@ import pytest
 
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, gen_empty_fingerprint, structs
+from opendbc.car.can_definitions import CanData
+from opendbc.car.car_helpers import get_car
 from opendbc.car.hyundai import hyundaican
+from opendbc.car.hyundai.discovery import CLASSIC_NORMAL_BUS_LAYOUT, SANTA_FE_BUS2_LAYOUT
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, DBC, HyundaiSafetyFlags, santa_fe_bus2_scc
+from opendbc.car.vin import VIN_UNKNOWN
 
 
 BUS2_MESSAGES = {0x420: 8, 0x421: 8, 0x389: 8, 0x38D: 8}
@@ -86,6 +90,43 @@ def test_ambiguous_scc_sources_do_not_admit_long():
   cp = CarInterface.get_params(CAR.HYUNDAI_SANTA_FE, fingerprint, [], True, False, False)
   assert not cp.openpilotLongitudinalControl
   assert not santa_fe_bus2_scc(cp)
+
+
+@pytest.mark.parametrize(('wiring', 'selected', 'normal_query'), [
+  ('retrofit', True, True), ('retrofit', False, False), ('factory', True, True),
+  ('missing_fca', True, False), ('mixed_scc', True, False), ('malformed', True, False),
+])
+def test_manual_retrofit_uses_normal_diagnostics_with_live_bus_evidence(wiring, selected, normal_query):
+  layout = dict(CLASSIC_NORMAL_BUS_LAYOUT if wiring == 'factory' else SANTA_FE_BUS2_LAYOUT)
+  if wiring == 'missing_fca':
+    del layout[(2, 0x38D)]
+  elif wiring == 'mixed_scc':
+    layout[(0, 0x421)] = 8
+  elif wiring == 'malformed':
+    layout[(2, 0x421)] = 7
+  traffic = [CanData(address, bytes(size), bus) for (bus, address), size in layout.items()]
+  switches = []
+  with patch('opendbc.car.car_helpers.get_vin', return_value=(-1, -1, VIN_UNKNOWN)), \
+       patch('opendbc.car.car_helpers.get_fw_versions', return_value=[]) as normal, \
+       patch('opendbc.car.car_helpers.get_present_ecus', return_value=set()) as present, \
+       patch('opendbc.car.car_helpers.get_fw_versions_ordered', return_value=[]) as generic:
+    ci = get_car(lambda **_: [traffic], lambda _: None, switches.append, False, False,
+                 forced_candidate=CAR.HYUNDAI_SANTA_FE if selected else None)
+
+  if normal_query:
+    normal.assert_called_once()
+    assert normal.call_args.kwargs == {'query_brand': 'hyundai', 'normal_bus_only': True}
+    present.assert_not_called()
+    generic.assert_not_called()
+    assert switches == [False, False]
+  else:
+    normal.assert_not_called()
+    generic.assert_called_once()
+    assert switches == [True, False]
+  if selected:
+    assert ci.CP.carFingerprint == CAR.HYUNDAI_SANTA_FE
+    assert ci.CP.fingerprintSource == structs.CarParams.FingerprintSource.fixed
+  assert not ci.CP.openpilotLongitudinalControl
 
 
 def test_only_proposes_acceleration_without_sending_display_or_fca():

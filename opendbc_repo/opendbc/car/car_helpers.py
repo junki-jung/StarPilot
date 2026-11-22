@@ -14,7 +14,8 @@ from opendbc.car.gm.discovery import automatic_trax_candidate, automatic_volt_ca
 from opendbc.car.ford.discovery import (normal_bus0_selection as ford_normal_bus0_selection,
                                        normal_bus0_queries as ford_normal_bus0_queries, normal_bus_query_brand)
 from opendbc.car.volvo.discovery import normal_bus_topology as volvo_normal_bus_topology
-from opendbc.car.hyundai.discovery import normal_bus_topology
+from opendbc.car.hyundai.discovery import normal_bus_topology, santa_fe_bus2_normal_topology
+from opendbc.car.hyundai.values import CAR as HYUNDAI
 from opendbc.car.honda.discovery import normal_bus_topology as honda_normal_bus_topology
 from opendbc.car.chrysler.discovery import normal_bus_topology as chrysler_normal_bus_topology
 from opendbc.car.tesla.discovery import normal_bus0_topology as tesla_normal_bus0_topology
@@ -113,7 +114,7 @@ def _tesla_fw_uses_normal_bus0() -> bool:
 # **** for use live only ****
 def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback,
                 cached_params: CarParamsT | None, *, known_gm_bus0: bool = False, known_ford_bus0: bool = False,
-                known_tesla_bus0: bool = False
+                known_tesla_bus0: bool = False, check_santa_fe_bus2: bool = False
                 ) -> tuple[str | None, dict, str, list[CarParams.CarFw], CarParams.FingerprintSource, bool]:
   if known_ford_bus0 and (known_gm_bus0 or not ford_normal_bus0_queries()):
     raise ValueError('Ford discovery topology no longer uses normal bus 0')
@@ -181,6 +182,7 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
           gm_probe=gm_normal_bus0_topology if _gm_fw_uses_normal_bus0() else None,
           volvo_probe=volvo_normal_bus_topology if not fw_versions.FW_QUERY_CONFIGS['volvo'].requests else None,
           tesla_probe=tesla_normal_bus0_topology if _tesla_fw_uses_normal_bus0() else None) or
+          ('hyundai' if check_santa_fe_bus2 and santa_fe_bus2_normal_topology(normal_bus_packets) else None) or
           ('honda' if honda_normal_bus_topology(normal_bus_packets) else None) or
           ('chrysler' if chrysler_normal_bus_topology(normal_bus_packets) else None)) is not None:
 
@@ -279,6 +281,9 @@ def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multip
   elif known_tesla_bus0:
     candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(
       can_recv, can_send, set_obd_multiplexing, cached_params, known_tesla_bus0=True)
+  elif forced_candidate == HYUNDAI.HYUNDAI_SANTA_FE:
+    candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(
+      can_recv, can_send, set_obd_multiplexing, cached_params, check_santa_fe_bus2=True)
   else:
     candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(can_recv, can_send, set_obd_multiplexing, cached_params)
 
